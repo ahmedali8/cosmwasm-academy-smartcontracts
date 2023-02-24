@@ -90,4 +90,35 @@ mod test {
         // Check that the response value matches the expected value of 0
         assert_eq!(resp, ValueResp { value: 0 });
     }
+
+    // Define a test function that checks that the `query::incremented()` function returns the expected result
+    #[test]
+    fn query_incremented_value() {
+        // Create a new `App` instance, which represents the blockchain environment for testing
+        let mut app: App = App::default();
+
+        // Store the compiled contract code on the blockchain and get the resulting contract ID
+        let contract_id: u64 = app.store_code(counting_contract());
+
+        // Instantiate a new contract instance using the contract ID and a sender address, and get the resulting contract address
+        let contract_addr: Addr = app
+            .instantiate_contract(
+                contract_id,
+                Addr::unchecked("sender"),
+                &Empty {},
+                &[],
+                "Counting contract",
+                None,
+            )
+            .unwrap();
+
+        // Query the `incremented` function with an input value of 3
+        let resp: ValueResp = app
+            .wrap()
+            .query_wasm_smart(contract_addr, &QueryMsg::Incremented { value: 3 })
+            .unwrap();
+
+        // Ensure that the response matches the expected result
+        assert_eq!(resp, ValueResp { value: 4 });
+    }
 }

@@ -1,201 +1,147 @@
-# Creating a message
+# Contracts testing
 
-You have a basic contract structure ready. It's time to add some life to the contract. In this lesson, you will implement a query message.
+After the last lesson, you should already have a contract you can talk to - it is a good point to start testing it.
 
-At first, we need an additional dependency - a serde crate with a derive feature to define serializable datatypes:
-
-```bash
-  $ cargo add serde --features derive
-```
-
-Now create a new module modifying the `src/lib.rs` :
-
-```rust
-  use cosmwasm_std::{
-      DepsMut, Env, MessageInfo, Empty, StdResult, Response, entry_point
-  };
-
-  pub mod msg;
-
-  #[entry_point]
-  pub fn instantiate(
-      _deps: DepsMut,
-      _env: Env,
-      _info: MessageInfo,
-      _msg: Empty,
-  ) -> StdResult<Response> {
-      Ok(Response::new())
-  }
-```
-
-We want our messages module to be public - in the future, external contracts may wish to use it to communicate with it. The next step is to create a module file, `src/msg.rs`:
-We want our messages module to be public - in the future, external contracts may wish to use it to communicate with it. The next step is to create a module file, `src/msg.rs`:
-
-```rust
-  use serde::{Deserialize, Serialize};
-
-  #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-  #[serde(rename_all = "snake_case")]
-  pub enum QueryMsg {
-      Value {},
-  }
-
-  #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-  #[serde(rename_all = "snake_case")]
-  pub struct ValueResp {
-      pub value: u64,
-  }
-```
-
-We created two messages here. The first one is the query message. When the contract is queried, it should be able to create a variety of queries. To do so, we typically create query messages as enum types, where every single variant is a separate query the contract understands.
-
-There are a couple of things to discuss in this message. First, it has to derive at least [Deserialize](https://docs.rs/serde/1.0.144/serde/trait.Deserialize.html), but we also want it to implement [Serialize](https://docs.rs/serde/1.0.144/serde/trait.Serialize.html) - so we can use it to send this message from a different contract or tests. The [Clone](https://doc.rust-lang.org/std/clone/trait.Clone.html) is kind of optional, but as it is a data transfer message, it is sometimes helpful to be able to clone it around. [Debug](https://doc.rust-lang.org/std/fmt/trait.Debug.html) and [PartialEq](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html) are mostly here for testing purposes - we will talk about testing smart contracts in the next lesson. [Eq](https://doc.rust-lang.org/std/cmp/trait.Eq.html) is here only because it is a good practice to implement it if it is possible and `PartialEq` is implemented - which is warned by clippy. There is a good chance, it would be removed if we would add some variant without implementation of `Eq`.
-What may be surprising is how the `Value {}` variant is defined - there are those curly braces, which are not strictly required by Rust syntax. It looks almost strange. However, it is here on purpose. It is related to how serde is serializing JSON values. If you would go with just `Value` here, when serializing `QueryMsg::Value` to JSON, it would end up as a string:
+Another dependency would be helpful with that:
 
 ```bash
-"Value"
+  $ cargo add --dev cw-multi-test
 ```
 
-There are two problems with that. First of all - the sole string is not a proper JSON object! And we want messages to be proper JSON objects. Another problem is inconsistency. Let's consider the following query message:
+The [multitest](https://docs.rs/cw-multi-test/0.14.0/cw_multi_test/) crate is a framework we deliver to make it easy to create smart contract tests with a simulated real blockchain environment. The idea is that instead of testing contracts function by function, they are tested as black-boxed applications, just like they were uploaded to the blockchain. Then instead of testing the internal functions, tests send real JSON messages to its entry points. It would be possible to test smart contracts by setting up the local containerized testnet, and automatically uploading them to operate on them later, but this is a bit more work to do, and such tests tend to take more time to execute. They have important value, but we prefer to have most of the coverage covered in those simulated tests using our framework.
+
+## Creating contract wrapper
+
+The first thing you need to test your contract with the multitest is the contract wrapper which would forward all messages to the proper entry point. We would write a function that creates such a wrapper. As the contract is small, I will put tests directly in lib.rs file in the dedicated `tests` module: #[cfg(test)]
 
 ```rust
-  enum QueryMsg {
-      Value,
-      PendingFunds { denom: Option<String> },
-  }
-```
+  mod test {
+      use cosmwasm_std::Empty;
+      use cw_multi_test::Contract;
 
-The `Value` variant is still (de)serialized as a string, but the `PendingFunds` becomes a proper JSON object:
-
-```
-  {
-      "PendingFunds": {}
-  },
-```
-
-or with denom provided:
-
-```
-  {
-      "PendingFunds:": {
-          "denom": "uatom"
+      fn counting_contract() -> Box<dyn Contract<Empty>> {
+          todo!()
       }
   }
 ```
 
-This inconsistency is itchy, and we want to avoid it. Also, most other frameworks deserialize empty enums as objects with a single field with an empty value. To achieve it with serde, you just add those curly braces. Doing so, you make serde serialize this variant to better form:
+There are a couple of things to explain here. Starting on top - the `#[cfg(test)]` attribute on the `tests` module. [cfg](https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg-attribute) is a conditional compilation attribute, meaning that the code it wraps would be compiled-in if and only if the predicate passed to it is true. In this case, we have `test` predicate, which is true on `cargo test` runs. Thanks to this, our test would not be unnecessarily sitting in the final binary where they are not needed.
 
-```
-  {
-      "Value": {}
-  }
-```
+The next thing is the [Contract](https://docs.rs/cw-multi-test/0.14.0/cw_multi_test/trait.Contract.html) trait from the multitest crate. It is a trait that defines the smart contract implementation for multitest. It is possible to implement your own structure and forward it to entry points, but we will utilize the [ContractWrapper](https://docs.rs/cw-multi-test/0.14.0/cw_multi_test/struct.ContractWrapper.html) type to make it easier. The generic argument for the `Contract` trait is used to test with some blockchain-specific features. In this course, we are talking only about generic Cosm Wasm contracts, so this would always be `Empty` for us.
 
-The other thing to mention is the `#[serde(rename_all = "snake_case)]` attribute. As you probably notice, the fields serialize to JSON by serde match the names of types in Rust. However, it is not a very JSONish way to name things. In Rust, we tend to use a "CamelCase" to name our types, while in JSON, we expect our fields to be "snake_case". We could obviously just rename variants to be "snake_case," but it would not be a rusty way to do so. Instead, we use the `rename_all` serde attribute to make it handle name conversion for us. Now, our `QueryMsg::Value` variant is serialize to nice JSON value:
-
-```
-  {
-      "value": {}
-  }
-```
-
-The second message I created is a response to the `Value` query. It is very similar to the `Query` message, but it is a `struct` this time - we would always know what kind of response we are sending or expecting. Also, you can argue that in this very message, the `rename_all` attribute is unnecessary as nothing is renamed, and you would be right. However, it is a good habit to have it there for consistency.
-
-## Query implementation
-
-Now we need to create yet another module to have a place for logic implementation. Let's call it `contract`, and keep this one private as it would contain internal contract logic:
+A small thing our contract still miss, and we need it for multitest, is the `execute` entry point - unless you added it yourself in your second lesson assignment. You need to add an execute entry point, very similar to the instantiate one:
 
 ```rust
-  use cosmwasm_std::{
-      DepsMut, Env, MessageInfo, Empty, StdResult, Response, entry_point
-  };
-
-  mod contract;
-  pub mod msg;
-
   #[entry_point]
-  pub fn instantiate(
-      _deps: DepsMut,
-      _env: Env,
-      _info: MessageInfo,
-      _msg: Empty,
-  ) -> StdResult<Response> {
+  pub fn execute(\_deps: DepsMut, \_env: Env, \_info: MessageInfo, \_msg: Empty) -> StdResult<Response> {
       Ok(Response::new())
   }
 ```
 
-And now let's implement the query handler in `src/contract.rs`:
+Now ypu are ready to add an implementation of `counting_contract` function
 
 ```rust
-  use crate::msg::ValueResp;
+  use cw_multi_test::ContractWrapper;
+  use crate::{execute, instantiate, query};
 
-  pub mod query {
-      use crate::msg::ValueResp;
-
-      pub fn value() -> ValueResp {
-          ValueResp { value: 0 }
-      }
+  fn counting_contract() -> Box<dyn Contract<Empty>> {
+      let contract = ContractWrapper::new(execute, instantiate, query);
+      Box::new(contract)
   }
 ```
 
-As you can see, I keep implementing my queries in dedicated submodules. I could move it to its own file, but I find it too fragmented. Also, I could just put everything in the contract module. Still, it would make it difficult to keep names not colliding between messages. Having this initial split for submodules makes extracting them later to own files easier - at the point when contract.rs overgrows.
+It is straightforward - create a `ContractWrapper` instance passing all three basic entry points to it, and then return it boxed.
 
-The essential thing here is the `query::value()` function which would be called when `QueryMsg::Value {}` is received. The function returns an arbitrary object which would be serialized before sending as a response.
+## Creating a test
 
-Lastly need to add an entry point for queries in `src/lib.rs`:
+Now it's time to add a test for the query
 
 ```rust
-  use cosmwasm_std::{
-      Deps, DepsMut, Env, MessageInfo, Empty, StdResult, Response, entry_point
-  };
+  #[test]
+  fn query_value() {
+      let mut app = App::default();
 
-  mod contract;
-  pub mod msg;
+      let contract_id = app.store_code(counting_contract());
 
-  #[entry_point]
-  pub fn instantiate(
-      _deps: DepsMut,
-      _env: Env,
-      _info: MessageInfo,
-      _msg: Empty,
-  ) -> StdResult<Response> {
-      Ok(Response::new())
-  }
+      let contract_addr = app
+          .instantiate_contract(
+              contract_id,
+              Addr::unchecked("sender"),
+              &Empty {},
+              &[],
+              "Counting contract",
+              None,
+          )
+          .unwrap();
 
-  #[entry_point]
-  pub fn query(_deps: Deps, _env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
-      use msg::QueryMsg::*;
-      use contract::query;
+      let resp: ValueResp = app
+          .wrap()
+          .query_wasm_smart(contract_addr, &QueryMsg::Value {})
+          .unwrap();
 
-      match msg {
-          Value {} => to_binary(&query::value()),
-      }
+      assert_eq!(resp, ValueResp { value: 0 });
   }
 ```
 
-As you see, the entry point for query is very similar to instantiate.
+### The _app_ object
 
-- The `deps` argument is of type [Deps](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.Deps.html) instead of `DepsMut` - it is because queries can never modify any blockchain state.
-- There is no `MessageInfo` argument - queries can never depend on who sends the message or on any query circumstances besides the blockchain state itself. Queries also never have funds sent with them.
-- The returned type is not a `Response`, but a [Binary](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.Binary.html) type instead - it is because the query returns arbitrary data to the querier instead of processing a full actor flow which is handled with `Response` type.
+Many things are happening here, so let me explain them one by one.
 
-To implement my query entry point, we typically just dispatch on message received to proper message handlers. I like to import all dispatched message variants to function scope to make it easier to read, but it depends strongly on your taste. I also import the query module in the function scope as I use it here often.
+You should be familiar with the `#[test]` attribute - it tells cargo that the function is a unit test.
 
-An essential thing to do is to call the [to_binary](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/fn.to_binary.html) function on the result of `value()` call. As you remember, we returned arbitrary types from the handler, but we need a uniform `Binary` type returned from the entry point. The `Binary` type represents any base64-encoded binary data. In this case, this would be JSON encoded query response. The `to_binary` function is a helper serializing and encoding serializable types to the `Binary` type. The function already returns `StdResult`, so you don't have to do any error management - just return the result directly from a final function.
+Then the first thing in this test is creating a default [App](https://docs.rs/cw-multi-test/0.14.0/cw_multi_test/struct.App.html) instance. `App`, is the soul of the multitest framework - it is the blockchain simulator, and it would be an interface to all contracts on it.
 
-After all, don't forget if the contract is still valid smart contract using `cosmwasm-check` utility:
+### Storing the contract on the blockchain
+
+We use it right after it is created to call [store_code](https://docs.rs/cw-multi-test/0.14.0/cw_multi_test/struct.App.html#method.store_code) on it. There is no code stored anywhere, but it performs an equivalent of storing code on the blockchain, so this is the function's name - to make test matching operations on the blockchain as closely as possible.
+
+Why do we have to store contracts in the blockchain? I like to visualize blockchain as an extensive database, particularly key-value storage. Smart contracts are some special values stored there. Every smart contract has its keys it is allowed to manage in this database, but also it has some WASM code that defines how it works. But instead of uploading the code for every single, smart contract, we made it possible to have multiple smart contracts using the same implementation. To achieve that, before creating (or more precisely: instantiating) a smart contract, we have to upload the code to the blockchain storage and then pass the id of this code to created contract. Storing code is this operation of uploading smart contract binary to be stored in a blockchain state.
+
+### Contract instantiation
+
+The next step is contract instantiation - creating the contract on the blockchain. The [instantiate_contract](https://docs.rs/cw-multi-test/0.14.0/cw_multi_test/trait.Executor.html#method.instantiate_contract) method requires some input.
+
+The first is the "uploaded" code id - the one you got back from your `store_code` call. Then you need to pass the address which sends the instantiation message. Most calls in CosmWasms can use this information, and it is verified by blockchain. In the test, we pass the sender with the message. To create a CosmWasm address, we are using the [Addr::unchecked](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.Addr.html#method.unchecked) function. It creates an address without validating it - it is not a good idea to use it in blockchain implementation. Still, it is very common to use it in tests, as here, we can use arbitrary strings for our addresses, so they are more readable in case of failures.
+
+Then we pass the instantiation message, which would be sent to the contract. I am using the `Empty` message, but what is important - is it would not be just passed to the entry point. It would be first serialized to JSON and then deserialized back to send it to the contract. It may seem unnecessary work, but it allows for testing if APIs are correct - for example, if two different messages we assume serialize the same way are interchangeable.
+
+After the message, there is a definition of native funds we want to send with the message. In CosmWasm, most messages can have some tokens sent with them, and they would be transferred to the destination contract if the message succeeds in executing. We will talk about dealing with those funds later, but until then, we pass an empty slice.
+
+Funds are followed with the label of the contract. There is not too much to tell about it - it is just the human-readable name of the created contract.
+
+Last is the admin of the contract. Admins are the only addresses that can later perform migrations of smart contracts. Similarly to funds - we do not care about them for now, so we just pass `None` to this, which means there is no admin, and no migrations would be allowed.
+
+Note, we need to unwrap the result of instantiation - it is because the instantiation could fail - it returns the `Result` in the contract. Our particular contract never fails, but multitest doesn't know about this. Also, unwrapping in tests is nothing bad - if unwrapping fails, the test fails.
+
+### Querying the contract
+
+Finally, it's time to query the contract on the blockchain. To do so, we first need to call the [wrap()](https://docs.rs/cw-multi-test/0.14.0/cw_multi_test/struct.App.html#method.wrap) method on the `app`. It converts the app object to a temporary [QuerierWrapper](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.QuerierWrapper.html) object, allowing us to query the blockchain. To query the contract, we use the [query_wasm_smart](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.QuerierWrapper.html#method.query_wasm_smart) function. Queries are simpler functions than instantiate. Depending on who calls them or receives any funds, they cannot modify the blockchain state. Because of that, the query needs only the queried contract address (which you got from instantiation) and the query message to send.
+
+However, there is one more thing here - note that you need to put the type hint for the message's response. The multitest framework works with JSON messages and has no idea what to deserialize your response to unless you provide it with a hint. We can trick the Rust type elision by swapping the [assert_eq](https://doc.rust-lang.org/std/cmp/trait.Eq.html?search=assert_eq) arguments order, but I find this more consistent.
+
+The last step is to ensure that the queried value is what we expect it to be - we use `assert_eq` here, which panics if its arguments are not equal.
+
+## Running the test
+
+Now it is time to run the new test using `cargo test`:
+
+```bash
+  $ cargo test
+```
+
+If it passes, it is also a good habit to always check if it is still a valid CosmWasm contract building it with cargo wasm, and validating with cosmwasm-check:
 
 ```bash
   $ cargo wasm
 ```
 
-At this point, you have a contract, which can be queried. It always returns a static response, but we will soon work on having an internal state in it. But before that happens, as we have some things done, it is an excellent time to learn how to test them.
+Now you have your smart contract query tested - it is time to add some state to it, so the value returned by a query is not a magic number.
 
 ## Assignment
 
-Add query to the contract taking a single number as its argument and returning the send argument incremented.
+Write the test for incrementing query created in last lesson assignment.
 
 ### Code repository
 
-- [After the lesson](https://github.com/CosmWasm/cw-academy-course/commit/23416f4564eaea2d60bafe0a85d6fb3a0eba900c)
-- [After the assignment](https://github.com/CosmWasm/cw-academy-course/commit/d2f4739be3b00523e9ffc9a7cc7ab8d754b539b5)
+- [After the lesson](https://github.com/CosmWasm/cw-academy-course/commit/5426831405bc9c91f4b6ced5ccd2bf27f6787809)
+- [After the assignment](https://github.com/CosmWasm/cw-academy-course/commit/1bbb2122d100d74d6b41e969de3363edbbc69cfe)
