@@ -10,3 +10,4 @@
 
 [dependencies]
   cosmwasm-std = "1.0.0"
+  serde = { version = "1.0.0", features = ["derive"] }
