@@ -2,7 +2,7 @@
 use cosmwasm_std::{
     entry_point, to_binary, Binary, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdResult,
 };
-use state::COUNTER;
+use msg::InstantiateMsg;
 
 // Import the `contract` module, the `msg`, and the `state` module from the current crate
 mod contract;
@@ -15,13 +15,9 @@ pub fn instantiate(
     deps: DepsMut,
     _env: Env,
     _info: MessageInfo,
-    _msg: Empty,
+    msg: InstantiateMsg,
 ) -> StdResult<Response> {
-    // Save the initial value of 0 to the storage under the key "COUNTER"
-    COUNTER.save(deps.storage, &0)?;
-
-    // Return a new `Response` with no data or log messages
-    Ok(Response::new())
+    contract::instantiate(deps, msg.counter)
 }
 
 // Define the `query` entry point function, which is called when a read-only operation is performed on the contract
@@ -52,7 +48,7 @@ mod test {
     // Import various items from the current crate and from external libraries
     use crate::{
         execute, instantiate,
-        msg::{QueryMsg, ValueResp},
+        msg::{InstantiateMsg, QueryMsg, ValueResp},
         query,
     };
     use cosmwasm_std::{Addr, Empty};
@@ -78,7 +74,7 @@ mod test {
             .instantiate_contract(
                 contract_id,
                 Addr::unchecked("sender"),
-                &Empty {},
+                &InstantiateMsg { counter: 10 },
                 &[],
                 "Counting contract",
                 None,
@@ -92,8 +88,8 @@ mod test {
             .query_wasm_smart(contract_addr, &QueryMsg::Value {})
             .unwrap();
 
-        // Check that the response value matches the expected value of 0
-        assert_eq!(resp, ValueResp { value: 0 });
+        // Check that the response value matches the expected value of 10
+        assert_eq!(resp, ValueResp { value: 10 });
     }
 
     // Define a test function that checks that the `query::incremented()` function returns the expected result

@@ -1,3 +1,15 @@
+use cosmwasm_std::{DepsMut, Response, StdResult};
+
+use crate::state::COUNTER;
+
+pub fn instantiate(deps: DepsMut, counter: u64) -> StdResult<Response> {
+    // Save the initial value of counter to the storage under the key "COUNTER"
+    COUNTER.save(deps.storage, &counter)?;
+
+    // Return a new `Response` with no data or log messages
+    Ok(Response::new())
+}
+
 // Define a new module called `query`
 pub mod query {
     use cosmwasm_std::{Deps, StdResult};

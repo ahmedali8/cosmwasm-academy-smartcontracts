@@ -12,6 +12,17 @@ pub enum QueryMsg {
     Incremented { value: u64 },
 }
 
+// Define a struct called InstantiateMsg that can be serialized and deserialized,
+// can be cloned, can be debug printed, and can be compared for equality.
+// The serde attribute renames the fields to snake_case during serialization.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub struct InstantiateMsg {
+    // Define a field called counter of type u64 which defaults to 0.
+    #[serde(default)]
+    pub counter: u64,
+}
+
 // Define a struct called ValueResp that can be serialized and deserialized,
 // can be cloned, can be debug printed, and can be compared for equality.
 // The serde attribute renames the fields to snake_case during serialization.
