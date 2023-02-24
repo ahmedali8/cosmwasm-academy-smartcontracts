@@ -34,3 +34,60 @@ pub fn query(_deps: Deps, _env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
         Incremented { value } => to_binary(&query::incremented(value)),
     }
 }
+// Define the `execute` entry point function, which is called when a write operation is performed on the contract
+#[entry_point]
+pub fn execute(_deps: DepsMut, _env: Env, _info: MessageInfo, _msg: Empty) -> StdResult<Response> {
+    // Return a default `Response` with no data or log messages
+    Ok(Response::new())
+}
+
+// Define a test module for the contract
+#[cfg(test)]
+mod test {
+    // Import various items from the current crate and from external libraries
+    use crate::{
+        execute, instantiate,
+        msg::{QueryMsg, ValueResp},
+        query,
+    };
+    use cosmwasm_std::{Addr, Empty};
+    use cw_multi_test::{App, Contract, ContractWrapper, Executor};
+
+    // Define a helper function that returns a boxed version of the contract for use in tests
+    fn counting_contract() -> Box<dyn Contract<Empty>> {
+        let contract = ContractWrapper::new(execute, instantiate, query);
+        Box::new(contract)
+    }
+
+    // Define a test function that checks that the `query::value()` function returns the expected result
+    #[test]
+    fn query_value() {
+        // Create a new `App` instance, which represents the blockchain environment for testing
+        let mut app: App = App::default();
+
+        // Store the compiled contract code on the blockchain and get the resulting contract ID
+        let contract_id: u64 = app.store_code(counting_contract());
+
+        // Instantiate a new contract instance using the contract ID and a sender address, and get the resulting contract address
+        let contract_addr: Addr = app
+            .instantiate_contract(
+                contract_id,
+                Addr::unchecked("sender"),
+                &Empty {},
+                &[],
+                "Counting contract",
+                None,
+            )
+            .unwrap();
+
+        // Call the `query_wasm_smart` function on the contract instance with a `Value` query message, and deserialize
+        // the resulting `Binary` value into a `ValueResp` struct
+        let resp: ValueResp = app
+            .wrap()
+            .query_wasm_smart(contract_addr, &QueryMsg::Value {})
+            .unwrap();
+
+        // Check that the response value matches the expected value of 0
+        assert_eq!(resp, ValueResp { value: 0 });
+    }
+}

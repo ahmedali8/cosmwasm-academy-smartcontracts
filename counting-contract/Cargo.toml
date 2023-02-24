@@ -11,3 +11,6 @@
 [dependencies]
   cosmwasm-std = "1.0.0"
   serde = { version = "1.0.0", features = ["derive"] }
+
+[dev-dependencies]
+  cw-multi-test = "0.16.2"
