@@ -12,6 +12,16 @@ pub enum QueryMsg {
     Incremented { value: u64 },
 }
 
+// Define an enum called ExecMsg that can be serialized and deserialized,
+// can be cloned, can be debug printed, and can be compared for equality.
+// The serde attribute renames the variants to snake_case during serialization.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecMsg {
+    // Define a variant called Poke that takes no parameters.
+    Poke {},
+}
+
 // Define a struct called InstantiateMsg that can be serialized and deserialized,
 // can be cloned, can be debug printed, and can be compared for equality.
 // The serde attribute renames the fields to snake_case during serialization.

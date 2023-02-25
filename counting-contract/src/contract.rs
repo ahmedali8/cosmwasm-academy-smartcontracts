@@ -32,3 +32,24 @@ pub mod query {
         ValueResp { value: value + 1 }
     }
 }
+
+// Define a new module called `exec`
+pub mod exec {
+    use cosmwasm_std::{DepsMut, MessageInfo, Response, StdResult};
+
+    use crate::state::COUNTER;
+
+    pub fn poke(deps: DepsMut, info: MessageInfo) -> StdResult<Response> {
+        // COUNTER.update(deps.storage, |counter| -> StdResult<_> { Ok(counter + 1) })?;
+
+        let counter: u64 = COUNTER.load(deps.storage)? + 1;
+        COUNTER.save(deps.storage, &counter)?;
+
+        let resp: Response = Response::new()
+            .add_attribute("action", "poke")
+            .add_attribute("sender", info.sender.as_str())
+            .add_attribute("counter", counter.to_string());
+
+        Ok(resp)
+    }
+}

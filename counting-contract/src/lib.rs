@@ -1,6 +1,6 @@
 // Import various items from the `cosmwasm_std` library
 use cosmwasm_std::{
-    entry_point, to_binary, Binary, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdResult,
+    entry_point, to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
 };
 use msg::InstantiateMsg;
 
@@ -37,9 +37,18 @@ pub fn query(deps: Deps, _env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
 }
 // Define the `execute` entry point function, which is called when a write operation is performed on the contract
 #[entry_point]
-pub fn execute(_deps: DepsMut, _env: Env, _info: MessageInfo, _msg: Empty) -> StdResult<Response> {
-    // Return a default `Response` with no data or log messages
-    Ok(Response::new())
+pub fn execute(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    msg: msg::ExecMsg,
+) -> StdResult<Response> {
+    use contract::exec;
+    use msg::ExecMsg::*;
+
+    match msg {
+        Poke {} => exec::poke(deps, info),
+    }
 }
 
 // Define a test module for the contract
@@ -48,11 +57,11 @@ mod test {
     // Import various items from the current crate and from external libraries
     use crate::{
         execute, instantiate,
-        msg::{InstantiateMsg, QueryMsg, ValueResp},
+        msg::{ExecMsg, InstantiateMsg, QueryMsg, ValueResp},
         query,
     };
     use cosmwasm_std::{Addr, Empty};
-    use cw_multi_test::{App, Contract, ContractWrapper, Executor};
+    use cw_multi_test::{App, AppResponse, Contract, ContractWrapper, Executor};
 
     // Define a helper function that returns a boxed version of the contract for use in tests
     fn counting_contract() -> Box<dyn Contract<Empty>> {
@@ -106,7 +115,7 @@ mod test {
             .instantiate_contract(
                 contract_id,
                 Addr::unchecked("sender"),
-                &Empty {},
+                &InstantiateMsg { counter: 0 },
                 &[],
                 "Counting contract",
                 None,
@@ -121,5 +130,44 @@ mod test {
 
         // Ensure that the response matches the expected result
         assert_eq!(resp, ValueResp { value: 4 });
+    }
+
+    #[test]
+    fn poke() {
+        let mut app = App::default();
+
+        let sender = Addr::unchecked("sender");
+
+        let contract_id = app.store_code(counting_contract());
+
+        let contract_addr = app
+            .instantiate_contract(
+                contract_id,
+                sender.clone(),
+                &InstantiateMsg { counter: 0 },
+                &[],
+                "Counting contract",
+                None,
+            )
+            .unwrap();
+
+        // execute poke
+        let _poke_resp: AppResponse = app
+            .execute_contract(
+                sender.clone(),
+                contract_addr.clone(),
+                &ExecMsg::Poke {},
+                &[],
+            )
+            .unwrap();
+
+        // println!("{:?}", poke_resp);
+
+        let resp: ValueResp = app
+            .wrap()
+            .query_wasm_smart(contract_addr, &QueryMsg::Value {})
+            .unwrap();
+
+        assert_eq!(resp, ValueResp { value: 1 });
     }
 }
