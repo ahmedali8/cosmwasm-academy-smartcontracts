@@ -20,6 +20,12 @@ pub enum QueryMsg {
 pub enum ExecMsg {
     // Define a variant called Poke that takes no parameters.
     Poke {},
+
+    // Define a variant called Reset that takes a single parameter called counter which defaults to 0.
+    Reset {
+        #[serde(default)]
+        counter: u64,
+    },
 }
 
 // Define a struct called InstantiateMsg that can be serialized and deserialized,

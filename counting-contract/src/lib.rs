@@ -48,6 +48,7 @@ pub fn execute(
 
     match msg {
         Poke {} => exec::poke(deps, info),
+        Reset { counter } => exec::reset(deps, info, counter),
     }
 }
 
@@ -169,5 +170,44 @@ mod test {
             .unwrap();
 
         assert_eq!(resp, ValueResp { value: 1 });
+    }
+
+    #[test]
+    fn reset() {
+        let mut app = App::default();
+
+        let sender = Addr::unchecked("sender");
+
+        let contract_id = app.store_code(counting_contract());
+
+        let contract_addr = app
+            .instantiate_contract(
+                contract_id,
+                sender.clone(),
+                &InstantiateMsg { counter: 0 },
+                &[],
+                "Counting contract",
+                None,
+            )
+            .unwrap();
+
+        // execute reset
+        let _reset_resp: AppResponse = app
+            .execute_contract(
+                sender.clone(),
+                contract_addr.clone(),
+                &ExecMsg::Reset { counter: 10 },
+                &[],
+            )
+            .unwrap();
+
+        // println!("{:?}", reset_resp);
+
+        let resp: ValueResp = app
+            .wrap()
+            .query_wasm_smart(contract_addr, &QueryMsg::Value {})
+            .unwrap();
+
+        assert_eq!(resp, ValueResp { value: 10 });
     }
 }
