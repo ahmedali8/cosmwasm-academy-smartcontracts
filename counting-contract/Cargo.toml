@@ -12,6 +12,7 @@
   cosmwasm-std = "1.0.0"
   cw-storage-plus = "1.0.1"
   serde = { version = "1.0.0", features = ["derive"] }
+  thiserror = "1.0.38"
 
 [dev-dependencies]
   cw-multi-test = "0.16.2"

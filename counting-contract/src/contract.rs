@@ -46,7 +46,10 @@ pub mod exec {
         BankMsg, Coin, DepsMut, Env, MessageInfo, Response, StdError, StdResult, Uint128,
     };
 
-    use crate::state::{COUNTER, MINIMAL_DONATION, OWNER};
+    use crate::{
+        error::ContractError,
+        state::{COUNTER, MINIMAL_DONATION, OWNER},
+    };
 
     pub fn donate(deps: DepsMut, info: MessageInfo) -> StdResult<Response> {
         // COUNTER.update(deps.storage, |counter| -> StdResult<_> { Ok(counter + 1) })?;
@@ -71,10 +74,12 @@ pub mod exec {
         Ok(resp)
     }
 
-    pub fn withdraw(deps: DepsMut, env: Env, info: MessageInfo) -> StdResult<Response> {
+    pub fn withdraw(deps: DepsMut, env: Env, info: MessageInfo) -> Result<Response, ContractError> {
         let owner = OWNER.load(deps.storage)?;
         if info.sender != owner {
-            return Err(StdError::generic_err("Unauthorized"));
+            return Err(ContractError::Unauthorized {
+                owner: owner.to_string(),
+            });
         }
 
         let balance = deps.querier.query_all_balances(&env.contract.address)?;

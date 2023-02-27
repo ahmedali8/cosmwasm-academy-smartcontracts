@@ -1,73 +1,46 @@
-# Sending funds
+# Errors handling
 
-In the previous lesson, you learned how to handle funds sent with a message. Today I will tell you how to send funds owned by your contract to another address. To do so, we will prepare a new execution message - `Withdraw`, which would be intended to be called only by the contract creator. The message would send all the funds from the contract to the message sender.
+Our `counting-contract` reports an error in case an unauthorized address calls some executions. Unfortunately - error handling is very poor, string based. It also makes testing errors a bit of a problem. Let's improve on that.
 
-## The contract creator
+## The error type
 
-The first thing to do is to keep information about who created the contract. To do so, add an additional field in the state:
+To define our errors, we would use the [thiserror](https://docs.rs/thiserror/1.0.33/thiserror/) crate. We need to add it to our project:
 
-```rust
-  use cosmwasm_std::{Addr, Coin};
-  use cw_storage_plus::Item;
-
-  pub const COUNTER: Item<u64> = Item::new("counter");
-  pub const MINIMAL_DONATION: Item<Coin> = Item::new("minimal_donation");
-  pub const OWNER: Item<Addr> = Item::new("owner");
+```bash
+  $ cargo add thiserror
 ```
 
-and initialize it on instantiation:
+Then we want to create a custom error type for our contract. We will put it in a new module in `src/error.rs` file - don't forget to add a module in your `src/lib.rs`:
 
 ```rust
-  use cosmwasm_std::MessageInfo;
-  use crate::state::OWNER:
+  use cosmwasm_std::StdError;
+  use thiserror::Error;
 
-  pub fn instantiate(
-      deps: DepsMut,
-      info: MessageInfo,
-      counter: u64,
-      minimal_donation: Coin,
-  ) -> StdResult<Response> {
-      COUNTER.save(deps.storage, &counter)?;
-      MINIMAL_DONATION.save(deps.storage, &minimal_donation)?;
-      OWNER.save(deps.storage, &info.sender)?;
-      Ok(Response::new())
+  #[derive(Error, Debug, PartialEq)]
+  pub enum ContractError {
+      #[error("{0}")]
+      Std(#[from] StdError),
+
+      #[error("Unauthorized - only {owner} can call it")]
+      Unauthorized { owner: String },
   }
 ```
 
-We added the `MessageInfo` argument, so remember to update the instantiation call in the entry point. Note that I didn't add a creator into the instantiation message - we are relying on who sends the instantiation message.
+Using `thiserror`, we define our error types as simple enum types. Deriving the [thiserror::Error](https://docs.rs/thiserror/1.0.33/thiserror/derive.Error.html) trait generates all the boilerplate, so the error is implementing `std::error::Error` trait. Things we need to deliver for it to work are the implementation of `Debug` - which is often derived, and the information on how the error should be converted to a string. This is achieved by putting an `#[error(...)]` attribute on all enum variants containing the format string for this variant.
 
-## Actor model introduction
+For our contract, the most important error is and `Unauthorized` variant - it is the only thing we return from the contract manually. But it is also crucial to implement the other `Std` variant. It wraps any error of the `StdError` type, which could be returned by CosmWasm standard library or utilities. This way, we can use the `ContractError` type in our smart contract, still being able to return errors occurring in `cosmwasm-std`. The additional `#[from]` attribute tells thiserror to generate the `From` trait, converting the underlying type to the error variant (in this case: `impl From<StdError> for ContractError`). This enables using the `?` operator forwarding `StdError` in functions returning `ContractError`.
 
-As I said in the previous lesson, one way of sending funds is to send a bank message to the blockchain. I also mentioned that all operations on CosmWasm are transactional. Let's talk about it a bit.
+## Returning an error
 
-Communication between entities (mostly contracts) in CosmWasm is designed using an actor model. That means that contracts are performing the job end-to-end and cannot wait for other contracts or operations during operation. To communicate with the blockchain, the contract can return some messages to process in the `Response` object. All those sub-messages would be executed one by one. There is no notion of parallelism in CosmWasm. At the time, only one transaction and one message could be processed.
-
-Now the transactional part comes into play. Message processing doesn't end with returning the `Response` object. First, all the sub-messages must be processed, which all happen in the same transaction. That means that if any of those sub-messages fail, the whole transaction is considered failing and rolled back - no state changes performed by execution or token transfers occur. This behavior can be overwritten, but this is an advanced technique we would not cover in this course.
-
-## Sending funds
-
-Now having a basic understanding of messages flow in CosmWasm, let's add a new execution message variant:
+Now having an error, we can use it in the smart contract. Let's update the `withdraw` function:
 
 ```rust
-  #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-  #[serde(rename_all = "snake_case")]
-  pub enum ExecMsg {
-      Donate {},
-      Reset {
-          #[serde(default)]
-          counter: u64,
-      },
-      Withdraw {},
-  }
-```
-
-The new message requires the new handler in the `contract::exec` module:
-
-```rust
-  pub fn withdraw(deps: DepsMut, env: Env, info: MessageInfo) -> StdResult<Response> {
+  pub fn withdraw(deps: DepsMut, env: Env, info: MessageInfo) -> Result<Response, ContractError> {
       let owner = OWNER.load(deps.storage)?;
       if info.sender != owner {
-          return Err(StdError::generic_err("Unauthorized"));
+          return Err(ContractError::Unauthorized {
+              owner: owner.to_string(),
+          });
       }
 
       let balance = deps.querier.query_all_balances(&env.contract.address)?;
@@ -85,32 +58,49 @@ The new message requires the new handler in the `contract::exec` module:
   }
 ```
 
-First of all, we need to check if the message sender is the one who created a contract. If it is not the case, we immediately fail execution with some generic error made from a string.
+The change here is simple - instead of returning `StdError::generic_error(...)`, we return our custom build `ContractError::Unauthorized`. The great upside of this approach is that as there are no more magic strings in error reporting, it is more difficult to make a typo. Before, we could easily mismatch `Unauthorized` spelling in one place and be left with inconsistent error reporting. Now, the error is structured strongly by the type system, and the typo can happen in a single place - and if it happens, it is easier to correct consistently along all usages.
 
-Then we need some way to figure out how much funds to send to the contract owner. We want to send all the funds, but we don't track them. Hopefully, there is a [querier](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.QuerierWrapper.html#) object on the `deps` argument, which allows us to query the blockchain for its state (even other contracts!). It may look like it breaks the described actor model, but it is not the case - query messages do not affect the blockchain in any way. Because of that, they do not obey strict transaction rules and can be called in execution. In our case, we do not query other contracts but the bank module. It would give us all the native tokens owned by the given address.
+You also need to remember to update the return type of the withdraw method - we don't want to return `StdResult` anymore. Instead, we switch to `Result<Response, ContractError>`. We need to make this change in the entry point too:
 
-To get the contract's address, we use the [env](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.Env.html) entry point argument. It contains all relevant meta information, which is not directly related to sending the message. There is current blockchain height and - what is interesting right now - the currently executed contract address.
+```rust
+  #[entry_point]
+  pub fn execute(
+      deps: DepsMut,
+      env: Env,
+      info: MessageInfo,
+      msg: msg::ExecMsg,
+  ) -> Result<Response, ContractError> {
+      use contract::exec;
+      use msg::ExecMsg::*;
 
-Having funds to send, it's time to prepare the message for the blockchain. The message we are looking for is a [BankMsg](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/enum.BankMsg.html), particularly the `Send` variant. It takes a funds receiver and amount. We can add it to the `Response` using the [add_message](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.Response.html#method.add_message) method.
+      match msg {
+          Donate {} => exec::donate(deps, info).map_err(ContractError::Std),
+          Reset { counter } => exec::reset(deps, info, counter).map_err(ContractError::Std),
+          Withdraw {} => exec::withdraw(deps, env, info),
+          WithdrawTo { receiver, funds } => {
+              exec::withdraw_to(deps, env, info, receiver, funds).map_err(ContractError::Std)
+          }
+      }
+  }
+```
 
-After implementing the message, don't forget to add it to the entry point dispatching!
+We had to make another alignment in the entry point. Some of our handlers still return a `StdError` type on the error case. It is ok for us - we have a variant in our `ContractError` for it, so we just map the error case to the proper value - we are using the enum variant as a single argument function constructing the value. We could also use any of `From::from`, `Into::into, ContractError::from`, probably others I don't remember - I like using the way I showed as I find it very clear and expressive.
+
+Now is a good time to ensure the regression and contract checks are passing.
 
 ## Testing
 
-Testing the new function should not be difficult - you know most of the building blocks. I recommend creating a new contract, then donating some funds, and then verifying if the funds are on the proper account - the last step would be something new:
+I mentioned before that returning errors via string doesn't make them very testable. The reason is to test them reasonably. You would have to compare returned error string, which looks bad, especially for longer error descriptions. It is also prone to any changes in errors - tests would start to fail one by one if you would change the format of your error.
+
+To make testing easier, multitest uses the [anyhow](https://docs.rs/anyhow/1.0.63/anyhow/) crate, authored by the same person as the `thiserror` crate. It allows it to forward all occurred errors in a type-erased way, so they can be later reconstructed to verify their structure. Let's see how it works in real live testing for an error path.
 
 ```rust
   #[test]
-  fn withdraw() {
+  fn unauthorized_withdraw() {
       let owner = Addr::unchecked("owner");
-      let sender = Addr::unchecked("sender");
+      let member = Addr::unchecked("member");
 
-      let mut app = App::new(|router, _api, storage| {
-          router
-              .bank
-              .init_balance(storage, &sender, coins(10, "atom"))
-              .unwrap();
-      });
+      let mut app = App::default();
 
       let contract_id = app.store_code(counting_contract());
 
@@ -128,43 +118,26 @@ Testing the new function should not be difficult - you know most of the building
           )
           .unwrap();
 
-      app.execute_contract(
-          sender.clone(),
-          contract_addr.clone(),
-          &ExecMsg::Donate {},
-          &coins(10, "atom"),
-      )
-      .unwrap();
-
-      app.execute_contract(
-          owner.clone(),
-          contract_addr.clone(),
-          &ExecMsg::Withdraw {},
-          &[],
-      )
-      .unwrap();
+      let err = app
+          .execute_contract(member, contract_addr, &ExecMsg::Withdraw {}, &[])
+          .unwrap_err();
 
       assert_eq!(
-          app.wrap().query_all_balances(owner).unwrap(),
-          coins(10, "atom")
-      );
-      assert_eq!(app.wrap().query_all_balances(sender).unwrap(), vec![]);
-      assert_eq!(
-          app.wrap().query_all_balances(contract_addr).unwrap(),
-          vec![]
+          ContractError::Unauthorized {
+              owner: owner.into()
+          },
+          err.downcast().unwrap()
       );
   }
 ```
 
-As you can see, I executed the donate operation from the address, not being an owner - it doesn't matter too much but is closer to expected on-chain usage. To verify token balances after all operations, I used the [query_all_balances](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/struct.QuerierWrapper.html#method.query_all_balances) function - similar to the one used in the contract to get the contract balance! The `wrap` function converts an `App` to a `QuerierWrapper` and has an identical API to the `querier` object in the `deps` entry point argument.
+The part of the test until the `Withdraw` execution is standard and has already been discussed. We don't need any funds sent here, as we just want to call `Withdraw` by an unauthorized address. As we expect the operation to fail, instead of calling `unwrap` on the result, we use [unwrap_err](https://doc.rust-lang.org/std/result/enum.Result.html#method.unwrap_err), working symmetrically but expecting `Result` to contain an `Err` variant. Then we can compare and error to an expected value, using the magic of `anyhow`. To make it work, we need to keep an expected error as the first side of `assert_eq`. We can call a [downcast](https://docs.rs/anyhow/1.0.63/anyhow/struct.Error.html#method.downcast) function on returned error, which tries to convert a type-erased error type to what we expect. The operation would fail if the error was created from the other type we are trying to convert it to - therefore, we have to unwrap it. The Rust compiler elides the type we expect to be returned to be the same type as the first argument of `assert_eq` - that is why we wanted it to be the first one. If you prefer to keep the expected value as the second part of `partial_eq`, there is a way around it - you can use the turbofish syntax (downcasting by `err.downcast::<ContractError>().unwrap()`).
 
 ## Assignment
 
-Make the previously created `reset` execution to be callable only by contract owner.
-
-Then add another operation, `WithdrawTo`, which withdraws tokens, but sends them to some address given in the message. Also add a possibility to limit how much tokens should be send this way. You should not take an address by `Addr`, it should be a `String` as sender may send any invalid addres and it should be validated first.
+Make sure, that no function reports a failure via `StdError::generic_err(...)` - it should use `ContractError` instead. Then write at least one error path test scenario for all your functions which may fail.
 
 ### Code repository
 
-- [After the lesson](https://github.com/CosmWasm/cw-academy-course/commit/21433d1efc31c1de90c511a03e9d4c8fa77c722e)
-- [After the assignment](https://github.com/CosmWasm/cw-academy-course/commit/f245b9c6729de6aa7989d2fb6eb5cdbcf4f2d5f0)
+- [After the lesson](https://github.com/CosmWasm/cw-academy-course/commit/21a9778396088526b72d2d8e7552016baf4c2ba3)
+- [After the assignment](https://github.com/CosmWasm/cw-academy-course/commit/9560de745cc0629d8797dbf88ddbe5c97af0dcc7)
