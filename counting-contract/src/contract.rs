@@ -1,11 +1,17 @@
-use cosmwasm_std::{Coin, DepsMut, Response, StdResult};
+use cosmwasm_std::{Coin, DepsMut, MessageInfo, Response, StdResult};
 
-use crate::state::{COUNTER, MINIMAL_DONATION};
+use crate::state::{COUNTER, MINIMAL_DONATION, OWNER};
 
-pub fn instantiate(deps: DepsMut, counter: u64, minimal_donation: Coin) -> StdResult<Response> {
-    // Save the initial value of counter and minimal_donation to the storage.
+pub fn instantiate(
+    deps: DepsMut,
+    info: MessageInfo,
+    counter: u64,
+    minimal_donation: Coin,
+) -> StdResult<Response> {
+    // Save the initial value of counter, minimal_donation, and owner to the storage.
     COUNTER.save(deps.storage, &counter)?;
     MINIMAL_DONATION.save(deps.storage, &minimal_donation)?;
+    OWNER.save(deps.storage, &info.sender)?;
 
     // Return a new `Response` with no data or log messages
     Ok(Response::new())
@@ -36,9 +42,9 @@ pub mod query {
 
 // Define a new module called `exec`
 pub mod exec {
-    use cosmwasm_std::{DepsMut, MessageInfo, Response, StdResult};
+    use cosmwasm_std::{BankMsg, DepsMut, Env, MessageInfo, Response, StdError, StdResult};
 
-    use crate::state::{COUNTER, MINIMAL_DONATION};
+    use crate::state::{COUNTER, MINIMAL_DONATION, OWNER};
 
     pub fn donate(deps: DepsMut, info: MessageInfo) -> StdResult<Response> {
         // COUNTER.update(deps.storage, |counter| -> StdResult<_> { Ok(counter + 1) })?;
@@ -59,6 +65,28 @@ pub mod exec {
             .add_attribute("action", "donate")
             .add_attribute("sender", info.sender.as_str())
             .add_attribute("counter", counter.to_string());
+
+        Ok(resp)
+    }
+
+    pub fn withdraw(deps: DepsMut, env: Env, info: MessageInfo) -> StdResult<Response> {
+        let owner = OWNER.load(deps.storage)?;
+        if info.sender != owner {
+            return Err(StdError::generic_err("Unauthorized"));
+        }
+
+        let balance = deps.querier.query_all_balances(&env.contract.address)?;
+
+        // here msg.sender is this contract
+        let bank_msg = BankMsg::Send {
+            to_address: owner.to_string(),
+            amount: balance,
+        };
+
+        let resp = Response::new()
+            .add_message(bank_msg)
+            .add_attribute("action", "withdraw")
+            .add_attribute("sender", info.sender.as_str());
 
         Ok(resp)
     }

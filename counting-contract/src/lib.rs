@@ -14,10 +14,10 @@ mod state;
 pub fn instantiate(
     deps: DepsMut,
     _env: Env,
-    _info: MessageInfo,
+    info: MessageInfo,
     msg: InstantiateMsg,
 ) -> StdResult<Response> {
-    contract::instantiate(deps, msg.counter, msg.minimal_donation)
+    contract::instantiate(deps, info, msg.counter, msg.minimal_donation)
 }
 
 // Define the `query` entry point function, which is called when a read-only operation is performed on the contract
@@ -39,7 +39,7 @@ pub fn query(deps: Deps, _env: Env, msg: msg::QueryMsg) -> StdResult<Binary> {
 #[entry_point]
 pub fn execute(
     deps: DepsMut,
-    _env: Env,
+    env: Env,
     info: MessageInfo,
     msg: msg::ExecMsg,
 ) -> StdResult<Response> {
@@ -49,6 +49,7 @@ pub fn execute(
     match msg {
         Donate {} => exec::donate(deps, info),
         Reset { counter } => exec::reset(deps, info, counter),
+        Withdraw {} => exec::withdraw(deps, env, info),
     }
 }
 
@@ -320,5 +321,68 @@ mod test {
             .unwrap();
 
         assert_eq!(resp, ValueResp { value: 10 });
+    }
+
+    #[test]
+    fn withdraw() {
+        let sender = Addr::unchecked("sender");
+        let owner = Addr::unchecked("owner");
+
+        let mut app = App::new(|router, _api, storage| {
+            router
+                .bank
+                .init_balance(storage, &sender, coins(10, ATOM))
+                .unwrap();
+        });
+
+        let contract_id = app.store_code(counting_contract());
+
+        let contract_addr = app
+            .instantiate_contract(
+                contract_id,
+                owner.clone(),
+                &InstantiateMsg {
+                    counter: 0,
+                    minimal_donation: coin(10, ATOM),
+                },
+                &[],
+                "Counting contract",
+                None,
+            )
+            .unwrap();
+
+        // execute donate (sender)
+        let _donate_resp: AppResponse = app
+            .execute_contract(
+                sender.clone(),
+                contract_addr.clone(),
+                &ExecMsg::Donate {},
+                &coins(10, ATOM),
+            )
+            .unwrap();
+
+        // println!("{:?}", donate_resp);
+
+        // execute withdraw (owner)
+        let _withdraw_resp: AppResponse = app
+            .execute_contract(
+                owner.clone(),
+                contract_addr.clone(),
+                &ExecMsg::Withdraw {},
+                &[],
+            )
+            .unwrap();
+
+        // println!("{:?}", withdraw_resp);
+
+        assert_eq!(
+            app.wrap().query_all_balances(owner).unwrap(),
+            coins(10, ATOM)
+        );
+        assert_eq!(app.wrap().query_all_balances(sender).unwrap(), vec![]);
+        assert_eq!(
+            app.wrap().query_all_balances(contract_addr).unwrap(),
+            vec![]
+        );
     }
 }

@@ -27,6 +27,9 @@ pub enum ExecMsg {
         #[serde(default)]
         counter: u64,
     },
+
+    // Define a variant called Withdraw that takes no parameters.
+    Withdraw {},
 }
 
 // Define a struct called InstantiateMsg that can be serialized and deserialized,
