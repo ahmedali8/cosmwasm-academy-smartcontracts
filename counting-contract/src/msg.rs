@@ -30,6 +30,12 @@ pub enum ExecMsg {
 
     // Define a variant called Withdraw that takes no parameters.
     Withdraw {},
+
+    WithdrawTo {
+        receiver: String,
+        #[serde(default)]
+        funds: Vec<Coin>,
+    },
 }
 
 // Define a struct called InstantiateMsg that can be serialized and deserialized,

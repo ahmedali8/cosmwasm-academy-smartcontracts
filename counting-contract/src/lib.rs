@@ -50,6 +50,7 @@ pub fn execute(
         Donate {} => exec::donate(deps, info),
         Reset { counter } => exec::reset(deps, info, counter),
         Withdraw {} => exec::withdraw(deps, env, info),
+        WithdrawTo { receiver, funds } => exec::withdraw_to(deps, env, info, receiver, funds),
     }
 }
 
@@ -383,6 +384,68 @@ mod test {
         assert_eq!(
             app.wrap().query_all_balances(contract_addr).unwrap(),
             vec![]
+        );
+    }
+
+    #[test]
+    pub fn withdraw_to() {
+        const ATOM: &str = "atom";
+
+        let owner = Addr::unchecked("owner");
+        let sender = Addr::unchecked("sender");
+        let receiver = Addr::unchecked("receiver");
+
+        let mut app = App::new(|router, _api, storage| {
+            router
+                .bank
+                .init_balance(storage, &sender, coins(10, ATOM))
+                .unwrap();
+        });
+
+        let contract_id = app.store_code(counting_contract());
+
+        let contract_addr = app
+            .instantiate_contract(
+                contract_id,
+                owner.clone(),
+                &InstantiateMsg {
+                    counter: 0,
+                    minimal_donation: coin(10, ATOM),
+                },
+                &[],
+                "Counting contract",
+                None,
+            )
+            .unwrap();
+
+        app.execute_contract(
+            sender.clone(),
+            contract_addr.clone(),
+            &ExecMsg::Donate {},
+            &coins(10, ATOM),
+        )
+        .unwrap();
+
+        app.execute_contract(
+            owner.clone(),
+            contract_addr.clone(),
+            &ExecMsg::WithdrawTo {
+                receiver: receiver.to_string(),
+                funds: coins(5, ATOM),
+            },
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(app.wrap().query_all_balances(owner).unwrap(), vec![]);
+        assert_eq!(app.wrap().query_all_balances(sender).unwrap(), vec![]);
+        assert_eq!(
+            app.wrap().query_all_balances(receiver).unwrap(),
+            coins(5, ATOM)
+        );
+        assert_eq!(
+            app.wrap().query_all_balances(contract_addr).unwrap(),
+            coins(5, ATOM)
         );
     }
 }

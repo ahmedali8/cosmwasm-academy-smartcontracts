@@ -42,7 +42,9 @@ pub mod query {
 
 // Define a new module called `exec`
 pub mod exec {
-    use cosmwasm_std::{BankMsg, DepsMut, Env, MessageInfo, Response, StdError, StdResult};
+    use cosmwasm_std::{
+        BankMsg, Coin, DepsMut, Env, MessageInfo, Response, StdError, StdResult, Uint128,
+    };
 
     use crate::state::{COUNTER, MINIMAL_DONATION, OWNER};
 
@@ -91,7 +93,57 @@ pub mod exec {
         Ok(resp)
     }
 
+    pub fn withdraw_to(
+        deps: DepsMut,
+        env: Env,
+        info: MessageInfo,
+        receiver: String,
+        funds: Vec<Coin>,
+    ) -> StdResult<Response> {
+        let owner = OWNER.load(deps.storage)?;
+        if info.sender != owner {
+            return Err(StdError::generic_err("Unauthorized"));
+        }
+
+        // Query the current balance of the contract's address from the blockchain
+        let mut balance: Vec<Coin> = deps.querier.query_all_balances(&env.contract.address)?;
+
+        // Check if there are any funds provided in the message info
+        if !funds.is_empty() {
+            // If funds were provided, iterate over each coin in the balance
+            for coin in &mut balance {
+                // Find the corresponding amount limit for the current coin from the provided funds (if any)
+                let limit = funds
+                    .iter()
+                    .find(|c| c.denom == coin.denom)
+                    .map(|c| c.amount)
+                    .unwrap_or(Uint128::zero());
+
+                // Set the coin amount to the minimum of the current amount and the limit (if there is a limit)
+                coin.amount = std::cmp::min(coin.amount, limit);
+            }
+        }
+
+        // here msg.sender is this contract
+        let bank_msg = BankMsg::Send {
+            to_address: receiver,
+            amount: funds,
+        };
+
+        let resp = Response::new()
+            .add_message(bank_msg)
+            .add_attribute("action", "withdraw")
+            .add_attribute("sender", info.sender.as_str());
+
+        Ok(resp)
+    }
+
     pub fn reset(deps: DepsMut, info: MessageInfo, counter: u64) -> StdResult<Response> {
+        let owner = OWNER.load(deps.storage)?;
+        if info.sender != owner {
+            return Err(StdError::generic_err("Unauthorized"));
+        }
+
         COUNTER.save(deps.storage, &counter)?;
 
         let resp: Response = Response::new()
