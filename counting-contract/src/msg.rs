@@ -1,3 +1,4 @@
+use cosmwasm_std::Coin;
 use serde::{Deserialize, Serialize};
 
 // Define an enum called QueryMsg that can be serialized and deserialized,
@@ -18,8 +19,8 @@ pub enum QueryMsg {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecMsg {
-    // Define a variant called Poke that takes no parameters.
-    Poke {},
+    // Define a variant called Donate that takes no parameters.
+    Donate {},
 
     // Define a variant called Reset that takes a single parameter called counter which defaults to 0.
     Reset {
@@ -37,6 +38,9 @@ pub struct InstantiateMsg {
     // Define a field called counter of type u64 which defaults to 0.
     #[serde(default)]
     pub counter: u64,
+
+    // Define a field called minimal_donation of type Coin.
+    pub minimal_donation: Coin,
 }
 
 // Define a struct called ValueResp that can be serialized and deserialized,
