@@ -239,6 +239,48 @@ mod test {
     }
 
     #[test]
+    fn donate_expecting_no_funds() {
+        let sender = Addr::unchecked("sender");
+
+        let mut app = App::default();
+
+        let contract_id = app.store_code(counting_contract());
+
+        let contract_addr = app
+            .instantiate_contract(
+                contract_id,
+                sender.clone(),
+                &InstantiateMsg {
+                    counter: 0,
+                    minimal_donation: coin(0, ATOM),
+                },
+                &[],
+                "Counting contract",
+                None,
+            )
+            .unwrap();
+
+        // execute donate
+        let _donate_resp: AppResponse = app
+            .execute_contract(
+                sender.clone(),
+                contract_addr.clone(),
+                &ExecMsg::Donate {},
+                &[],
+            )
+            .unwrap();
+
+        // println!("{:?}", donate_resp);
+
+        let resp: ValueResp = app
+            .wrap()
+            .query_wasm_smart(contract_addr.clone(), &QueryMsg::Value {})
+            .unwrap();
+
+        assert_eq!(resp, ValueResp { value: 1 });
+    }
+
+    #[test]
     fn reset() {
         let mut app = App::default();
 
