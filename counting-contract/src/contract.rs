@@ -42,9 +42,7 @@ pub mod query {
 
 // Define a new module called `exec`
 pub mod exec {
-    use cosmwasm_std::{
-        BankMsg, Coin, DepsMut, Env, MessageInfo, Response, StdError, StdResult, Uint128,
-    };
+    use cosmwasm_std::{BankMsg, Coin, DepsMut, Env, MessageInfo, Response, StdResult, Uint128};
 
     use crate::{
         error::ContractError,
@@ -104,10 +102,12 @@ pub mod exec {
         info: MessageInfo,
         receiver: String,
         funds: Vec<Coin>,
-    ) -> StdResult<Response> {
+    ) -> Result<Response, ContractError> {
         let owner = OWNER.load(deps.storage)?;
         if info.sender != owner {
-            return Err(StdError::generic_err("Unauthorized"));
+            return Err(ContractError::Unauthorized {
+                owner: owner.to_string(),
+            });
         }
 
         // Query the current balance of the contract's address from the blockchain
@@ -143,10 +143,16 @@ pub mod exec {
         Ok(resp)
     }
 
-    pub fn reset(deps: DepsMut, info: MessageInfo, counter: u64) -> StdResult<Response> {
+    pub fn reset(
+        deps: DepsMut,
+        info: MessageInfo,
+        counter: u64,
+    ) -> Result<Response, ContractError> {
         let owner = OWNER.load(deps.storage)?;
         if info.sender != owner {
-            return Err(StdError::generic_err("Unauthorized"));
+            return Err(ContractError::Unauthorized {
+                owner: owner.to_string(),
+            });
         }
 
         COUNTER.save(deps.storage, &counter)?;
