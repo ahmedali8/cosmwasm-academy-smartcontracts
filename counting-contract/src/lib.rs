@@ -9,6 +9,8 @@ use msg::InstantiateMsg;
 mod contract;
 pub mod error;
 pub mod msg;
+#[cfg(test)]
+pub mod multitest;
 mod state;
 
 // Define the `instantiate` entry point function, which is called when a new contract is deployed to the blockchain
