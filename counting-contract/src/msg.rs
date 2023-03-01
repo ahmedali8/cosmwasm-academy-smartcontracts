@@ -7,10 +7,6 @@ pub enum QueryMsg {
     // Define a variant called Value that takes no parameters.
     #[returns(ValueResp)]
     Value {},
-
-    // Define a variant called Incremented that takes a single parameter called value.
-    #[returns(ValueResp)]
-    Incremented { value: u64 },
 }
 
 #[cw_serde]

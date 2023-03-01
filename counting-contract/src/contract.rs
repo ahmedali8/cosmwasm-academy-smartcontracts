@@ -32,12 +32,6 @@ pub mod query {
 
         Ok(ValueResp { value })
     }
-
-    // Define a public function called `incremented` that takes a single `u64` argument and returns a `ValueResp` struct
-    pub fn incremented(value: u64) -> ValueResp {
-        // Create a new `ValueResp` struct with a `value` field set to the input `value` incremented by 1, and return it
-        ValueResp { value: value + 1 }
-    }
 }
 
 // Define a new module called `exec`
