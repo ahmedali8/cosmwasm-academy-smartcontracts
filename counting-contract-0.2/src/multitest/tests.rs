@@ -1,7 +1,12 @@
+use crate::msg::ValueResp;
 use cosmwasm_std::{coin, coins, Addr};
+use counting_contract_0_1::multitest::contract::CountingContract as CountingContract_0_1;
 use cw_multi_test::App;
 
-use crate::error::ContractError;
+use crate::{
+    error::ContractError,
+    state::{State, STATE},
+};
 
 use super::contract::CountingContract;
 
@@ -20,7 +25,6 @@ fn query_value() {
         code_id,
         &sender,
         "Counting contract",
-        None,
         10,
         coin(10, ATOM),
     )
@@ -44,7 +48,6 @@ fn donate_without_funds() {
         code_id,
         &sender,
         "Counting contract",
-        None,
         None,
         coin(10, ATOM),
     )
@@ -76,7 +79,6 @@ fn donate_with_funds() {
         code_id,
         &sender,
         "Counting contract",
-        None,
         None,
         coin(10, ATOM),
     )
@@ -111,7 +113,6 @@ fn donate_expecting_no_funds() {
         &sender,
         "Counting contract",
         None,
-        None,
         coin(0, ATOM),
     )
     .unwrap();
@@ -137,7 +138,6 @@ fn reset() {
         code_id,
         &sender,
         "Counting contract",
-        None,
         None,
         coin(10, ATOM),
     )
@@ -170,7 +170,6 @@ fn withdraw() {
         code_id,
         &owner,
         "Counting contract",
-        None,
         None,
         coin(10, ATOM),
     )
@@ -222,7 +221,6 @@ fn withdraw_to() {
         &owner,
         "Counting contract",
         None,
-        None,
         coin(10, ATOM),
     )
     .unwrap();
@@ -266,7 +264,6 @@ fn unauthorized_withdraw() {
         &owner,
         "Counting contract",
         None,
-        None,
         coin(10, ATOM),
     )
     .unwrap();
@@ -294,7 +291,6 @@ fn unauthorized_withdraw_to() {
         code_id,
         &owner,
         "Counting contract",
-        None,
         None,
         coin(0, ATOM),
     )
@@ -327,7 +323,6 @@ fn unauthorized_reset() {
         &owner,
         "Counting contract",
         None,
-        None,
         coin(0, ATOM),
     )
     .unwrap();
@@ -338,6 +333,53 @@ fn unauthorized_reset() {
         err,
         ContractError::Unauthorized {
             owner: owner.into()
+        }
+    );
+}
+
+#[test]
+fn migration() {
+    let admin = Addr::unchecked("admin");
+    let owner = Addr::unchecked("owner");
+    let sender = Addr::unchecked("sender");
+
+    let mut app = App::new(|router, _api, storage| {
+        router
+            .bank
+            .init_balance(storage, &sender, coins(10, ATOM))
+            .unwrap()
+    });
+
+    let old_code_id = CountingContract_0_1::store_code(&mut app);
+    let new_code_id = CountingContract::store_code(&mut app);
+
+    let contract = CountingContract_0_1::instantiate(
+        &mut app,
+        old_code_id,
+        &owner,
+        "Counting contract",
+        &admin,
+        None,
+        coin(10, ATOM),
+    )
+    .unwrap();
+
+    contract
+        .donate(&mut app, &sender, &coins(10, ATOM))
+        .unwrap();
+
+    let contract =
+        CountingContract::migrate(&mut app, contract.into(), new_code_id, &admin).unwrap();
+
+    let resp = contract.query_value(&app).unwrap();
+    assert_eq!(resp, ValueResp { value: 1 });
+
+    let state = STATE.query(&app.wrap(), contract.addr().clone()).unwrap();
+    assert_eq!(
+        state,
+        State {
+            counter: 1,
+            minimal_donation: coin(10, ATOM)
         }
     );
 }
