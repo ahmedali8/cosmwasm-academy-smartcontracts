@@ -17,10 +17,13 @@
   cosmwasm-std = "1.0.0"
   cw-multi-test = { version = "0.16.2", optional = true }
   cw-storage-plus = "1.0.1"
+  cw2 = "1.0.1"
   schemars = "0.8.12"
   serde = { version = "1.0.0", features = ["derive"] }
   thiserror = "1.0.38"
 
 [dev-dependencies]
-  counting-contract-0_1 = { path = "../counting-contract", package = "counting-contract", features = ["tests"] }
+  counting-contract-0_1 = { path = "../counting-contract", package = "counting-contract", features = [
+    "tests",
+  ] }
   cw-multi-test = "0.16.2"
