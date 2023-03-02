@@ -1,10 +1,7 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{
-    to_binary, Binary, Deps, DepsMut, Empty, Env, MessageInfo, Response, StdResult,
-};
+use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
 use error::ContractError;
-use msg::InstantiateMsg;
 
 // Import the `contract` module, the `msg`, and the `state` module from the current crate
 mod contract;
@@ -22,7 +19,7 @@ pub fn instantiate(
     deps: DepsMut,
     _env: Env,
     info: MessageInfo,
-    msg: InstantiateMsg,
+    msg: msg::InstantiateMsg,
 ) -> StdResult<Response> {
     contract::instantiate(deps, info, msg.counter, msg.minimal_donation, msg.parent)
 }
@@ -65,6 +62,6 @@ pub fn execute(
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
-pub fn migrate(deps: DepsMut, _env: Env, _msg: Empty) -> Result<Response, ContractError> {
-    contract::migrate(deps)
+pub fn migrate(deps: DepsMut, _env: Env, msg: msg::MigrateMsg) -> Result<Response, ContractError> {
+    contract::migrate(deps, msg.parent)
 }

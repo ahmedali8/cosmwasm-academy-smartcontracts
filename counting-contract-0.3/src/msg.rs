@@ -50,6 +50,11 @@ pub struct InstantiateMsg {
 }
 
 #[cw_serde]
+pub struct MigrateMsg {
+    pub parent: Option<Parent>,
+}
+
+#[cw_serde]
 pub struct ValueResp {
     // Define a field called value of type u64.
     pub value: u64,
