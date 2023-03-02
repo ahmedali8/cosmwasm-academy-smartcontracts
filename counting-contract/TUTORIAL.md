@@ -1,31 +1,72 @@
-# Version management
+# Calling external contracts
 
-We know how to migrate the contract, but we created a serious problem. Our migration works upgrading from "0.1" to "0.2", but what are we supposed to do releasing the "0.3" version of the contract with yet another set of changes? How do we know if someone is upgrading the contract version by version or jumping straight from "0.1" to "0.3"? Or maybe he migrated from "0.2" to "0.2" with no changes at all? Not to mention that maybe by mistake, the wrong contract is being migrated, and now because of admin mistake, some contract is completely unusable because it turned out from "dancing contract" to "counting contract"! Maybe it was done on purpose, but we cannot prevent nasty jokes by authorized admin - we can help him avoid mistakes.
+In our journey, we implemented donations counting smart contract. We learn a solid foundation to create single contracts on the chain, but in real life, we would often have systems using multiple smart contracts. We will not dive into building such systems, but I want to show you the basics of how to trigger the execution of external contracts in CosmWasm.
 
-## Storing contract version
+## Preparing a state
 
-We will store the contract version in the contract state to solve our problem. Then, we would be able to get it back on the contract migration to determine how to migrate the contract. However, we won't do it directly. We will use the standardized cw2 tool for that. Let's add it to the dependencies:
+We are adding new functionality, so let's start copying the contract and creating new version (remember to update it in `Cargo.toml`:
 
 ```bash
-  $ cargo add cw2
-  $ cargo add cw2
+  $ cp -r ./counting-contract-0.2/ ./counting-contract-0.3
 ```
 
-We usually do not change the code of the previous contract version. This is why it is important always to add versioning in the earliest version of the contract, so when you need it in the future, you will have it there. In the case you forgot to do that, there is a way around it - you can assume that if there is no version stored, it is the first released version. It is, however, not the best idea, as if you would forget it again to add it on the first migration, you will be in a very bad spot not being able to distinguish those two versions.
+We want to add a functionality to our contract, so every couple of donations sends part of accumulated funds to another "parent" counting contract using the `Donate` message. We would allow configuring both frequency and part of funds to donate.
 
-Now let's update our instantiate to store the contract version in its state when the contract is created (do it in both contract versions):
+Let's start adding some more state to the contract:
 
 ```rust
-  use cw2::set_contract_version;
+  use cosmwasm_std::Decimal;
 
-  const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
-  const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+  #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+  pub struct State {
+      pub counter: u64,
+      pub minimal_donation: Coin,
+      pub owner: Addr,
+      pub donating_parent: Option<u64>,
+  }
 
+  #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+  pub struct ParentDonation {
+      pub address: Addr,
+      pub donating_parent_period: u64,
+      pub part: Decimal,
+  }
+
+  pub const STATE: Item<State> = Item::new("state");
+  pub const PARENT_DONATION: Item<ParentDonation> = Item::new("parent_donation");
+```
+
+We added two things to state. The `State` structure got enriched with `donation_parent` field. It would be a countown till the donation forwarding is supposed to happen. The `donating_parent_period` would be a value it should be reset to when reaches `0`. Now we need some more things in the instantiation message:
+
+```rust
+  use cosmwasm_std::Decimal;
+
+  #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+  pub struct Parent {
+      pub addr: String,
+      pub donating_period: u64,
+      pub part: Decimal,
+  }
+
+  #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
+  #[serde(rename_all = "snake_case")]
+  pub struct InstantiateMsg {
+      #[serde(default)]
+      pub counter: u64,
+      pub minimal_donation: Coin,
+      pub parent: Option<Parent>,
+  }
+```
+
+We added a new embedded structure to keep the information about forwarding to the parent contract. If this is not set, we will disable this functionality. Obviously, we also need to update the instantiation function (then remember to update our entry point with the new argument):
+
+```rust
   pub fn instantiate(
       deps: DepsMut,
       info: MessageInfo,
       counter: u64,
       minimal_donation: Coin,
+      parent: Option<Parent>,
   ) -> StdResult<Response> {
       set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
@@ -35,38 +76,26 @@ Now let's update our instantiate to store the contract version in its state when
               counter,
               minimal_donation,
               owner: info.sender,
+              donating_parent: parent.as_ref().map(|p| p.donating_period),
           },
       )?;
+
+      if let Some(parent) = parent {
+          PARENT_DONATION.save(
+              deps.storage,
+              &ParentDonation {
+                  address: deps.api.addr_validate(&parent.addr)?,
+                  donating_parent_period: parent.donating_period,
+                  part: parent.part,
+              },
+          )?;
+      }
+
       Ok(Response::new())
   }
 ```
 
-Notice the two constants I created for this. I am using [env!](https://doc.rust-lang.org/std/macro.env.html) macro to reach to environment variables [created by cargo](https://doc.rust-lang.org/cargo/reference/environment-variables.html). They are set to the contract name and version defined in `Cargo.toml`. This way, we don't need to track the version in multiple places.
-
-You may argue that storing contract names is unnecessary, but it has its uses. It prevents the admin from updating the other contract he intended to - we can detect contract name collision and refuse to migrate different contracts.
-
-## Dispatching migration
-
-We finished the generic changes. Now everything should be done only in `0.2` version of the contract. First, we need to add two more error variants to our `ContractError` - we want to report two failing situations on contract migration:
-
-```rust
-  #[derive(Error, Debug, PartialEq)]
-  pub enum ContractError {
-      #[error("{0}")]
-      Std(#[from] StdError),
-
-      #[error("Unauthorized - only {owner} can call it")]
-      Unauthorized { owner: String },
-
-      #[error("Invalid contract to migrate from: {contract}")]
-      InvalidContract { contract: String },
-
-      #[error("Unsupported contract version for migration: {version}")]
-      InvalidContractVersion { version: String },
-  }
-```
-
-Now Let's rename the `contract::migrate` function to `contract::migrate_0_1_0`. This migration is valid for migration from a particular contract version, and in the future, you can have a function to migrate from every version separately. It would also be a great idea to keep all of this in its own `migration` module. Then create another `migrate` function, performing the version dispatch:
+Finally, we also need to update the migration. We need to update the `migrate_0_1_0` as well to add a function to migrate from "0.2" version. To keep things simple, we will assume that the old contract didn't use the parent functionality, so he still doesn't need it:
 
 ```rust
   pub fn migrate(mut deps: DepsMut) -> Result<Response, ContractError> {
@@ -80,6 +109,7 @@ Now Let's rename the `contract::migrate` function to `contract::migrate_0_1_0`. 
 
       let resp = match contract_version.version.as_str() {
           "0.1.0" => migrate_0_1_0(deps.branch()).map_err(ContractError::from)?,
+          "0.2.0" => migrate_0_2_0(deps.branch()).map_err(ContractError::from)?,
           CONTRACT_VERSION => return Ok(Response::default()),
           version => {
               return Err(ContractError::InvalidContractVersion {
@@ -92,19 +122,209 @@ Now Let's rename the `contract::migrate` function to `contract::migrate_0_1_0`. 
 
       Ok(resp)
   }
+
+  pub fn migrate_0_1_0(deps: DepsMut) -> StdResult<Response> {
+      const COUNTER: Item<u64> = Item::new("counter");
+      const MINIMAL_DONATION: Item<Coin> = Item::new("minimal_donation");
+      const OWNER: Item<Addr> = Item::new("owner");
+
+      let counter = COUNTER.load(deps.storage)?;
+      let minimal_donation = MINIMAL_DONATION.load(deps.storage)?;
+      let owner = OWNER.load(deps.storage)?;
+
+      STATE.save(
+          deps.storage,
+          &State {
+              counter,
+              minimal_donation,
+              owner,
+              donating_parent: None,
+          },
+      )?;
+
+      Ok(Response::new())
+  }
+
+  pub fn migrate_0_2_0(deps: DepsMut) -> StdResult<Response> {
+      #[derive(Serialize, Deserialize)]
+      struct OldState {
+          counter: u64,
+          minimal_donation: Coin,
+          owner: Addr,
+      }
+
+      const OLD_STATE: Item<OldState> = Item::new("state");
+
+      let OldState {
+          counter,
+          minimal_donation,
+          owner,
+      } = OLD_STATE.load(deps.storage)?;
+
+      STATE.save(
+          deps.storage,
+          &State {
+              counter,
+              minimal_donation,
+              owner,
+              donating_parent: None,
+          },
+      )?;
+
+      Ok(Response::new())
+  }
 ```
 
-First, we have to load the version of the contract on-chain. Then we validate if the contract name didn't change to prevent an admin mistake. If the contract to update is proper, we dispatch to a migrate functions. Note that I am explicitly checking for the current contract version, in which case, I don't want to do anything - we return immediately. It is worth noting it works only if the `CONTRACT_VERSION` is a constant - if it is a variable, it would be treated as a generic match, and the last branch would be unreachable. If the contract version is not matched on the final branch, we refuse to migrate. It might happen when the contract is downgraded - but we don't know how to downgrade it, as we cannot predict any state changes! If you want to allow this, then you can just do nothing in such a case, but it may lead to strange behavior, so make sure you properly design for such a case.
+In the migration from "0.2" you may find a nice use of destructurization in rust. Also, it is worth noting that it is not needed to have this second migration - it turns out that the old and new State are serializing to the same JSON if there is no parent because it is optional. However, it is no harm to having them - this way, we are sure we do not mess something up.
 
-Also, note the [branch()](https://doc.rust-lang.org/cargo/reference/environment-variables.html) function we call on `deps` - it is a useful utility which allows having another copy of a mutable state in a single contract - like a clone().
+## Forwarding the donation
 
-Finally, we updated the contract version to the new value so the contract version would be valid on future migration. Last little thing - ensure you updated your entry point signature to return the proper error type. Now run your whole regression and contract check - it should still pass.
+Now we need to add the new functionality to the `donate` execution. Take a look at the code:
+
+```rust
+  pub fn donate(deps: DepsMut, env: Env, info: MessageInfo) -> StdResult<Response> {
+      let mut state = STATE.load(deps.storage)?;
+      let mut resp = Response::new();
+
+      if state.minimal_donation.amount.is_zero()
+          || info.funds.iter().any(|coin| {
+              coin.denom == state.minimal_donation.denom
+                  && coin.amount >= state.minimal_donation.amount
+          })
+      {
+          state.counter += 1;
+
+          if let Some(parent) = &mut state.donating_parent {
+              *parent -= 1;
+
+              if *parent == 0 {
+                  let parent_donation = PARENT_DONATION.load(deps.storage)?;
+                  *parent = parent_donation.donating_parent_period;
+
+                  let funds: Vec<_> = deps
+                      .querier
+                      .query_all_balances(env.contract.address)?
+                      .into_iter()
+                      .map(|mut coin| {
+                          coin.amount = coin.amount * parent_donation.part;
+                          coin
+                      })
+                      .collect();
+
+                  let msg = WasmMsg::Execute {
+                      contract_addr: parent_donation.address.to_string(),
+                      msg: to_binary(&ExecMsg::Donate {})?,
+                      funds,
+                  };
+
+                  resp = resp
+                      .add_message(msg)
+                      .add_attribute("donated_to_parent", parent_donation.address.to_string());
+              }
+          }
+
+          STATE.save(deps.storage, &state)?;
+      }
+
+      resp = resp
+          .add_attribute("action", "poke")
+          .add_attribute("sender", info.sender.as_str())
+          .add_attribute("counter", state.counter.to_string());
+
+      Ok(resp)
+  }
+```
+
+The code should be familiar - we use mostly knowledge we already have. Note that I moved the response creation to the very beginning of the function because I want to add sub-messages to it in the function implementation. The other way would be to store messages somewhere on the side and then add them to created response - we use both approaches commonly, depending on what is more convenient for a particular case.
+
+To send a message to another contract, we do a similar thing to sending the funds - we use the `add_message` to schedule execution when this handler finishes its work. This time, instead of `BankMsg`, we send a [WasmMessage](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/enum.WasmMsg.html), which is designed to send contract-related messages. Here we are using the ExecMsg, but it can also be used to instantiate or migrate another contract.
+
+You may be curious how the `add_message` handles accepting different message types, and the answer is simple: it uses a similar trick we used before to pass the option transparently. Instead of taking the concrete type, `add_message` accepts any argument implementing the [Into<CosmosMsg> trait](https://docs.rs/cosmwasm-std/1.0.0/cosmwasm_std/enum.CosmosMsg.html) - both `WasmMsg` and `BankMsg` fulfil that bound.
+
+Finally, don't forget to update your entry point and tests, as our changes require some alignment there.
+
+## Testing
+
+Traditionally - new functionality requires testing. Let's see how multitest handles having multiple contracts created. In the end, it was the primary reason it was created (and that is why it has "multi" in its name!). Here is the test of the new functionality:
+
+```rust
+  #[test]
+  fn donating_parent() {
+      let owner = Addr::unchecked("owner");
+      let sender = Addr::unchecked("sender");
+
+      let mut app = App::new(|router, _api, storage| {
+          router
+              .bank
+              .init_balance(storage, &sender, coins(20, "atom"))
+              .unwrap();
+      });
+
+      let code_id = CountingContract::store_code(&mut app);
+
+      let parent_contract = CountingContract::instantiate(
+          &mut app,
+          code_id,
+          &owner,
+          "Parent contract",
+          None,
+          None,
+          coin(0, ATOM),
+          None,
+      )
+      .unwrap();
+
+      let contract = CountingContract::instantiate(
+          &mut app,
+          code_id,
+          &owner,
+          "Counting contract",
+          None,
+          None,
+          coin(10, ATOM),
+          Parent {
+              addr: parent_contract.addr().to_string(),
+              donating_period: 2,
+              part: Decimal::percent(10),
+          },
+      )
+      .unwrap();
+
+      contract
+          .donate(&mut app, &sender, &coins(10, ATOM))
+          .unwrap();
+      contract
+          .donate(&mut app, &sender, &coins(10, ATOM))
+          .unwrap();
+
+      let resp = parent_contract.query_value(&app).unwrap();
+      assert_eq!(resp, ValueResp { value: 1 });
+
+      let resp = contract.query_value(&app).unwrap();
+      assert_eq!(resp, ValueResp { value: 2 });
+
+      assert_eq!(app.wrap().query_all_balances(owner).unwrap(), vec![]);
+      assert_eq!(app.wrap().query_all_balances(sender).unwrap(), vec![]);
+      assert_eq!(
+          app.wrap().query_all_balances(contract.addr()).unwrap(),
+          coins(18, ATOM)
+      );
+      assert_eq!(
+          app.wrap()
+              .query_all_balances(parent_contract.addr())
+              .unwrap(),
+          coins(2, ATOM)
+      );
+  }
+```
+
+Everything is natural, and following knowledge, we already have. We configured an environment with two counting contracts, one set as the parent of the other. To simplify the test, we set donating period to two donations and performed them. Then we verified if both contract counters have proper value and if all funds flow as we expected.
 
 ## Assignment
 
-Test that migrating the contract to the same version works.
+Update the migration so it allows to add the parent contract when migrating. You will need to add a new migration message for that.
 
 ### Code repository
 
-- [After the lesson](https://github.com/CosmWasm/cw-academy-course/commit/56e0a3f1012dcc338973251c024ee30ddafbe370)
-- [After the assignment](https://github.com/CosmWasm/cw-academy-course/commit/53d1ba614cd8923d08115ffee0d7f3c0f571f154)
+- [After the lesson](https://github.com/CosmWasm/cw-academy-course/commit/cb9e02e07d12fb5c8c2e90b444eb263a71b1cea5)
+- [After the assignment](https://github.com/CosmWasm/cw-academy-course/commit/4fd25ca81f5fe8e232f106b0a5b991188f027f1f)
